@@ -9,11 +9,9 @@ import Bootstrap.Grid.Col as Col
 import Html exposing (Html, button, div, input, p, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
-import Http
-import Json.Decode
-import Json.Encode
 import List
-import Time
+import Platform.Sub
+import WebSocket
 
 
 apiBaseUrl : String
@@ -37,11 +35,7 @@ main =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Time.every 500 (\_ -> Tick)
-
-
-
--- MODEL
+    WebSocket.listen "ws://echo.websocket.org" Echo
 
 
 type alias Model =
@@ -55,10 +49,7 @@ init =
     ( { content = ""
       , messages = []
       }
-    , Http.send GotValues <|
-        Http.get
-            (apiBaseUrl ++ "/values")
-            (Json.Decode.list Json.Decode.string)
+    , Cmd.none
     )
 
 
@@ -69,9 +60,7 @@ init =
 type Msg
     = NewContent String
     | SubmitNewMessage
-    | GotValues (Result Http.Error (List String))
-    | PostedValue (Result Http.Error String)
-    | Tick
+    | Echo String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -82,34 +71,15 @@ update msg model =
 
         SubmitNewMessage ->
             if model.content /= "" then
-                ( { model | messages = model.content :: model.messages, content = "" }
-                , Http.send PostedValue <|
-                    Http.post (apiBaseUrl ++ "/values")
-                        (Http.jsonBody (Json.Encode.string model.content))
-                        Json.Decode.string
+                ( { model | messages = ("Sent: " ++ model.content) :: model.messages, content = "" }
+                , WebSocket.send "ws://echo.websocket.org" model.content
                 )
 
             else
                 ( model, Cmd.none )
 
-        GotValues result ->
-            case result of
-                Ok values ->
-                    ( { model | messages = values }, Cmd.none )
-
-                Err _ ->
-                    ( model, Cmd.none )
-
-        PostedValue _ ->
-            ( model, Cmd.none )
-
-        Tick ->
-            ( model
-            , Http.send GotValues <|
-                Http.get
-                    (apiBaseUrl ++ "/values")
-                    (Json.Decode.list Json.Decode.string)
-            )
+        Echo value ->
+            ( { model | messages = ("Received: " ++ value) :: model.messages }, Cmd.none )
 
 
 
