@@ -6,7 +6,6 @@ import Bootstrap.Form as Form
 import Bootstrap.Form.Input as Input
 import Bootstrap.Grid as Grid
 import Bootstrap.Grid.Col as Col
-import Browser
 import Html exposing (Html, button, div, input, p, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
@@ -17,12 +16,14 @@ import List
 import Time
 
 
+apiBaseUrl : String
 apiBaseUrl =
     "http://localhost:5000/api"
 
 
+main : Program Never Model Msg
 main =
-    Browser.element
+    Html.program
         { subscriptions = subscriptions
         , init = init
         , update = update
@@ -36,7 +37,7 @@ main =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Time.every 500 Tick
+    Time.every 500 (\_ -> Tick)
 
 
 
@@ -49,15 +50,15 @@ type alias Model =
     }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : ( Model, Cmd Msg )
+init =
     ( { content = ""
       , messages = []
       }
-    , Http.get
-        { url = apiBaseUrl ++ "/values"
-        , expect = Http.expectJson GotValues <| Json.Decode.list Json.Decode.string
-        }
+    , Http.send GotValues <|
+        Http.get
+            (apiBaseUrl ++ "/values")
+            (Json.Decode.list Json.Decode.string)
     )
 
 
@@ -69,8 +70,8 @@ type Msg
     = NewContent String
     | SubmitNewMessage
     | GotValues (Result Http.Error (List String))
-    | PostedValue (Result Http.Error ())
-    | Tick Time.Posix
+    | PostedValue (Result Http.Error String)
+    | Tick
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -82,11 +83,10 @@ update msg model =
         SubmitNewMessage ->
             if model.content /= "" then
                 ( { model | messages = model.content :: model.messages, content = "" }
-                , Http.post
-                    { url = apiBaseUrl ++ "/values"
-                    , body = Http.jsonBody <| Json.Encode.string model.content
-                    , expect = Http.expectWhatever PostedValue
-                    }
+                , Http.send PostedValue <|
+                    Http.post (apiBaseUrl ++ "/values")
+                        (Http.jsonBody (Json.Encode.string model.content))
+                        Json.Decode.string
                 )
 
             else
@@ -103,12 +103,12 @@ update msg model =
         PostedValue _ ->
             ( model, Cmd.none )
 
-        Tick _ ->
+        Tick ->
             ( model
-            , Http.get
-                { url = apiBaseUrl ++ "/values"
-                , expect = Http.expectJson GotValues <| Json.Decode.list Json.Decode.string
-                }
+            , Http.send GotValues <|
+                Http.get
+                    (apiBaseUrl ++ "/values")
+                    (Json.Decode.list Json.Decode.string)
             )
 
 
