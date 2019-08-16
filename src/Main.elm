@@ -9,6 +9,9 @@ import Bootstrap.Grid.Col as Col
 import Html exposing (Html, button, div, input, p, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
+import Http
+import Json.Decode
+import Json.Encode
 import List
 import Platform.Sub
 import WebSocket
@@ -16,7 +19,22 @@ import WebSocket
 
 apiBaseUrl : String
 apiBaseUrl =
-    "http://localhost:5000/api"
+    "https://localhost:5001/api"
+
+
+apiAuthUrl : String
+apiAuthUrl =
+    apiBaseUrl ++ "/auth"
+
+
+wssBaseUrl : String
+wssBaseUrl =
+    "wss://localhost:5001/ws"
+
+
+wssChatUrl : String
+wssChatUrl =
+    wssBaseUrl ++ "/chat"
 
 
 main : Program Never Model Msg
@@ -35,12 +53,14 @@ main =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    WebSocket.listen "ws://echo.websocket.org" Echo
+    WebSocket.listen wssChatUrl ReceivedChatMsg
 
 
 type alias Model =
     { content : String
     , messages : List String
+    , username : String
+    , password : String
     }
 
 
@@ -48,6 +68,8 @@ init : ( Model, Cmd Msg )
 init =
     ( { content = ""
       , messages = []
+      , username = ""
+      , password = ""
       }
     , Cmd.none
     )
@@ -59,8 +81,42 @@ init =
 
 type Msg
     = NewContent String
+    | NewUsername String
     | SubmitNewMessage
-    | Echo String
+    | SubmitUsername
+    | PostedUsername (Result Http.Error String)
+    | ReceivedChatMsg String
+
+
+postUser : Model -> Http.Request String
+postUser model =
+    let
+        body =
+            Json.Encode.string model.username
+                |> Http.jsonBody
+    in
+    Http.post (apiBaseUrl ++ "/auth") body Json.Decode.string
+
+
+postUserCmd : Model -> Cmd Msg
+postUserCmd model =
+    Http.send PostedUsername (postUser model)
+
+
+postedUsername : Model -> Result Http.Error String -> ( Model, Cmd Msg )
+postedUsername model result =
+    case result of
+        Ok newToken ->
+            ( { model | password = newToken }
+            , WebSocket.send wssChatUrl <|
+                model.username
+                    ++ ":"
+                    ++ newToken
+            )
+
+        -- TODO: handle error
+        Err error ->
+            ( model, Cmd.none )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -69,17 +125,28 @@ update msg model =
         NewContent newContent ->
             ( { model | content = newContent }, Cmd.none )
 
+        NewUsername newUsername ->
+            ( { model | username = newUsername }, Cmd.none )
+
         SubmitNewMessage ->
             if model.content /= "" then
-                ( { model | messages = ("Sent: " ++ model.content) :: model.messages, content = "" }
-                , WebSocket.send "ws://echo.websocket.org" model.content
+                ( { model | content = "" }
+                , WebSocket.send wssChatUrl model.content
                 )
 
             else
                 ( model, Cmd.none )
 
-        Echo value ->
-            ( { model | messages = ("Received: " ++ value) :: model.messages }, Cmd.none )
+        SubmitUsername ->
+            ( model
+            , postUserCmd model
+            )
+
+        PostedUsername result ->
+            postedUsername model result
+
+        ReceivedChatMsg value ->
+            ( { model | messages = value :: model.messages }, Cmd.none )
 
 
 
@@ -88,24 +155,54 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    Grid.container []
+    let
+        loggedIn : Bool
+        loggedIn =
+            String.length model.password > 0
+    in
+    Grid.container [] <|
         [ CDN.stylesheet
         , Html.br [] []
-        , Form.form [ Html.Events.onSubmit SubmitNewMessage ]
-            [ Form.row []
-                [ Form.col []
-                    [ Input.text
-                        [ Input.placeholder "Write a message"
-                        , Input.value model.content
-                        , Input.onInput NewContent
-                        , Input.attrs [ autofocus True ]
+        ]
+            ++ (if loggedIn then
+                    [ Form.form
+                        [ Html.Events.onSubmit SubmitNewMessage
+                        ]
+                        [ Form.row []
+                            [ Form.col []
+                                [ Input.text
+                                    [ Input.placeholder "Write a message"
+                                    , Input.value model.content
+                                    , Input.onInput NewContent
+                                    , Input.attrs [ autofocus True ]
+                                    ]
+                                ]
+                            , Form.col [ Col.smAuto ]
+                                [ Button.button [ Button.primary ] [ text "Submit" ]
+                                ]
+                            ]
+                        ]
+                    , Html.br [] []
+                    , div [] <| List.map (\message -> p [] [ text message ]) model.messages
+                    ]
+
+                else
+                    [ Form.form
+                        [ Html.Events.onSubmit SubmitUsername
+                        ]
+                        [ Form.row []
+                            [ Form.col []
+                                [ Input.text
+                                    [ Input.placeholder "Enter your nickname"
+                                    , Input.value model.username
+                                    , Input.onInput NewUsername
+                                    , Input.attrs [ autofocus True ]
+                                    ]
+                                ]
+                            , Form.col [ Col.smAuto ]
+                                [ Button.button [ Button.primary ] [ text "Login" ]
+                                ]
+                            ]
                         ]
                     ]
-                , Form.col [ Col.smAuto ]
-                    [ Button.button [ Button.primary ] [ text "Submit" ]
-                    ]
-                ]
-            ]
-        , Html.br [] []
-        , div [] <| List.map (\message -> p [] [ text message ]) model.messages
-        ]
+               )
