@@ -6,6 +6,8 @@ import Bootstrap.Form as Form
 import Bootstrap.Form.Input as Input
 import Bootstrap.Grid as Grid
 import Bootstrap.Grid.Col as Col
+import Bootstrap.ListGroup as ListGroup
+import Bootstrap.Utilities.Flex as Flex
 import Html exposing (Html, button, div, input, p, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
@@ -61,6 +63,7 @@ type alias Model =
     , messages : List String
     , username : String
     , password : String
+    , errors : List String
     }
 
 
@@ -70,6 +73,7 @@ init =
       , messages = []
       , username = ""
       , password = ""
+      , errors = []
       }
     , Cmd.none
     )
@@ -86,6 +90,7 @@ type Msg
     | SubmitUsername
     | PostedUsername (Result Http.Error String)
     | ReceivedChatMsg String
+    | RemoveError Int
 
 
 postUser : Model -> Http.Request String
@@ -103,6 +108,30 @@ postUserCmd model =
     Http.send PostedUsername (postUser model)
 
 
+handleHttpError : Http.Error -> String
+handleHttpError error =
+    case error of
+        Http.BadUrl err ->
+            "Provided a bad url, " ++ err
+
+        Http.Timeout ->
+            "The request timed out"
+
+        Http.NetworkError ->
+            "A network level error occured"
+
+        Http.BadStatus { body } ->
+            case Json.Decode.decodeString Json.Decode.string body of
+                Ok s ->
+                    s
+
+                Err _ ->
+                    toString body
+
+        Http.BadPayload err response ->
+            err ++ ": " ++ toString response
+
+
 postedUsername : Model -> Result Http.Error String -> ( Model, Cmd Msg )
 postedUsername model result =
     case result of
@@ -114,9 +143,8 @@ postedUsername model result =
                     ++ newToken
             )
 
-        -- TODO: handle error
         Err error ->
-            ( model, Cmd.none )
+            ( { model | errors = handleHttpError error :: model.errors }, Cmd.none )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -138,15 +166,35 @@ update msg model =
                 ( model, Cmd.none )
 
         SubmitUsername ->
-            ( model
-            , postUserCmd model
-            )
+            if model.username /= "" then
+                ( model
+                , postUserCmd model
+                )
+
+            else
+                ( model, Cmd.none )
 
         PostedUsername result ->
             postedUsername model result
 
         ReceivedChatMsg value ->
             ( { model | messages = value :: model.messages }, Cmd.none )
+
+        RemoveError i ->
+            let
+                removeFromList : List a -> Int -> List a
+                removeFromList l i =
+                    case ( l, i ) of
+                        ( [], _ ) ->
+                            []
+
+                        ( _ :: xs, 0 ) ->
+                            xs
+
+                        ( x :: xs, _ ) ->
+                            x :: removeFromList xs (i - 1)
+            in
+            ( { model | errors = removeFromList model.errors i }, Cmd.none )
 
 
 
@@ -159,15 +207,37 @@ view model =
         loggedIn : Bool
         loggedIn =
             String.length model.password > 0
+
+        renderError : Int -> String -> ListGroup.Item Msg
+        renderError i s =
+            ListGroup.li
+                [ ListGroup.attrs [ Flex.block, Flex.justifyBetween, Flex.alignItemsCenter ]
+                , ListGroup.danger
+                ]
+                [ text s
+                , Html.span
+                    [ class "close"
+                    , property "innerHTML" (Json.Encode.string "&times;")
+                    , onClick (RemoveError i)
+                    ]
+                    []
+                ]
     in
     Grid.container [] <|
-        [ CDN.stylesheet
-        , Html.br [] []
-        ]
+        [ CDN.stylesheet ]
+            ++ (if List.isEmpty model.errors then
+                    []
+
+                else
+                    [ Html.br [] []
+                    , ListGroup.ul <|
+                        List.indexedMap renderError model.errors
+                    ]
+               )
+            ++ [ Html.br [] [] ]
             ++ (if loggedIn then
                     [ Form.form
-                        [ Html.Events.onSubmit SubmitNewMessage
-                        ]
+                        [ Html.Events.onSubmit SubmitNewMessage ]
                         [ Form.row []
                             [ Form.col []
                                 [ Input.text
