@@ -7,6 +7,7 @@ import Bootstrap.Form.Input as Input
 import Bootstrap.Grid as Grid
 import Bootstrap.Grid.Col as Col
 import Bootstrap.ListGroup as ListGroup
+import Bootstrap.Modal as Modal
 import Bootstrap.Utilities.Flex as Flex
 import Html exposing (Html, button, div, input, p, text)
 import Html.Attributes exposing (..)
@@ -91,6 +92,7 @@ type Msg
     | PostedUsername (Result Http.Error String)
     | ReceivedChatMsg String
     | RemoveError Int
+    | CloseModal
 
 
 postUser : Model -> Http.Request String
@@ -144,7 +146,13 @@ postedUsername model result =
             )
 
         Err error ->
-            ( { model | errors = handleHttpError error :: model.errors }, Cmd.none )
+            let
+                err =
+                    handleHttpError error
+            in
+            ( { model | errors = ifThenElse (List.member err model.errors) model.errors <| err :: model.errors }
+            , Cmd.none
+            )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -166,7 +174,7 @@ update msg model =
                 ( model, Cmd.none )
 
         SubmitUsername ->
-            if model.username /= "" then
+            if String.trim model.username /= "" then
                 ( model
                 , postUserCmd model
                 )
@@ -196,20 +204,33 @@ update msg model =
             in
             ( { model | errors = removeFromList model.errors i }, Cmd.none )
 
+        CloseModal ->
+            ( model, Cmd.none )
+
 
 
 -- VIEW
 
 
-view : Model -> Html Msg
-view model =
-    let
-        loggedIn : Bool
-        loggedIn =
-            String.length model.password > 0
+ifThenElse : Bool -> a -> a -> a
+ifThenElse predicate x y =
+    if predicate then
+        x
 
-        renderError : Int -> String -> ListGroup.Item Msg
-        renderError i s =
+    else
+        y
+
+
+loggedIn : Model -> Bool
+loggedIn model =
+    String.length model.password > 0
+
+
+displayErrors : Model -> Html Msg
+displayErrors model =
+    let
+        displayError : Int -> String -> ListGroup.Item Msg
+        displayError i s =
             ListGroup.li
                 [ ListGroup.attrs [ Flex.block, Flex.justifyBetween, Flex.alignItemsCenter ]
                 , ListGroup.danger
@@ -223,56 +244,71 @@ view model =
                     []
                 ]
     in
+    ListGroup.ul <|
+        List.indexedMap displayError model.errors
+
+
+displayLoginForm : Model -> Html Msg
+displayLoginForm model =
+    let
+        validationError : Bool
+        validationError =
+            not (List.isEmpty model.errors) && not (loggedIn model)
+    in
+    Modal.config CloseModal
+        |> Modal.large
+        --|> Modal.hideOnBackdropClick True
+        |> Modal.h3 [] [ text "Please login" ]
+        |> Modal.body []
+            [ Form.form [ Html.Events.onSubmit SubmitUsername ]
+                [ Form.row []
+                    [ Form.col []
+                        [ Input.text
+                            [ Input.placeholder "Enter your nickname"
+                            , Input.value model.username
+                            , Input.onInput NewUsername
+                            , Input.attrs [ autofocus (not (loggedIn model)) ]
+                            ]
+                        ]
+                    , Form.col [ Col.smAuto ]
+                        [ Button.button [ Button.primary ] [ text "Login" ] ]
+                    ]
+                , Form.row [] [ Form.col [] [ displayErrors model ] ]
+                ]
+            ]
+        |> Modal.view (ifThenElse (loggedIn model) Modal.hidden Modal.shown)
+
+
+displayBody : Model -> Html Msg
+displayBody model =
+    div []
+        [ Form.form
+            [ Html.Events.onSubmit SubmitNewMessage ]
+            [ Form.row []
+                [ Form.col []
+                    [ Input.text
+                        [ Input.placeholder "Write a message"
+                        , Input.value model.content
+                        , Input.onInput NewContent
+                        , Input.attrs [ autofocus (loggedIn model) ]
+                        ]
+                    ]
+                , Form.col [ Col.smAuto ]
+                    [ Button.button [ Button.primary ] [ text "Submit" ]
+                    ]
+                ]
+            ]
+        , Html.br [] []
+        , div [] <| List.map (\message -> p [] [ text message ]) model.messages
+        ]
+
+
+view : Model -> Html Msg
+view model =
     Grid.container [] <|
-        [ CDN.stylesheet ]
-            ++ (if List.isEmpty model.errors then
-                    []
-
-                else
-                    [ Html.br [] []
-                    , ListGroup.ul <|
-                        List.indexedMap renderError model.errors
-                    ]
-               )
-            ++ [ Html.br [] [] ]
-            ++ (if loggedIn then
-                    [ Form.form
-                        [ Html.Events.onSubmit SubmitNewMessage ]
-                        [ Form.row []
-                            [ Form.col []
-                                [ Input.text
-                                    [ Input.placeholder "Write a message"
-                                    , Input.value model.content
-                                    , Input.onInput NewContent
-                                    , Input.attrs [ autofocus True ]
-                                    ]
-                                ]
-                            , Form.col [ Col.smAuto ]
-                                [ Button.button [ Button.primary ] [ text "Submit" ]
-                                ]
-                            ]
-                        ]
-                    , Html.br [] []
-                    , div [] <| List.map (\message -> p [] [ text message ]) model.messages
-                    ]
-
-                else
-                    [ Form.form
-                        [ Html.Events.onSubmit SubmitUsername
-                        ]
-                        [ Form.row []
-                            [ Form.col []
-                                [ Input.text
-                                    [ Input.placeholder "Enter your nickname"
-                                    , Input.value model.username
-                                    , Input.onInput NewUsername
-                                    , Input.attrs [ autofocus True ]
-                                    ]
-                                ]
-                            , Form.col [ Col.smAuto ]
-                                [ Button.button [ Button.primary ] [ text "Login" ]
-                                ]
-                            ]
-                        ]
-                    ]
-               )
+        [ CDN.stylesheet
+        , Html.br [] []
+        , ifThenElse (loggedIn model) (displayErrors model) <| Html.span [] []
+        , displayLoginForm model
+        , displayBody model
+        ]
