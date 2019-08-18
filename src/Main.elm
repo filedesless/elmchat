@@ -98,7 +98,7 @@ ifThenElse predicate x y =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    WebSocket.listen wssChatUrl ReceivedChatMsg
+    WebSocket.listen wssChatUrl HandleWebSocketMessage
 
 
 type alias Model =
@@ -112,8 +112,10 @@ type alias Model =
 
 
 
--- TODO: get user list from websocket instead, to get dynamic updates
---          requires the server to allow guest connections, at least for reading
+-- TODO:
+--   - get user list from websocket instead, to get dynamic updates
+--       requires the server to allow guest connections, at least for reading
+--   - fix autofocus on "submit messages" input
 
 
 getUserList : Http.Request (List String)
@@ -163,7 +165,7 @@ type Msg
     | SubmitNewMessage
     | SubmitUsername
     | PostedUsername (Result Http.Error String)
-    | ReceivedChatMsg String
+    | HandleWebSocketMessage String
     | RemoveError Int
     | CloseModal
     | GotUserList (Result Http.Error (List String))
@@ -235,8 +237,8 @@ update msg model =
         PostedUsername result ->
             postedUsername model result
 
-        ReceivedChatMsg value ->
-            ( { model | messages = value :: model.messages }, Cmd.none )
+        HandleWebSocketMessage value ->
+            handleWebSocketMessage model value
 
         RemoveError i ->
             let
@@ -259,6 +261,56 @@ update msg model =
 
         GotUserList result ->
             gotUserList model result
+
+
+handleWebSocketMessage : Model -> String -> ( Model, Cmd Msg )
+handleWebSocketMessage model value =
+    let
+        msg =
+            decodeWebSocketMessage value
+    in
+    case msg of
+        WebSocketChatMessage { username, message } ->
+            ( { model | messages = (username ++ ": " ++ message) :: model.messages }, Cmd.none )
+
+        WebSocketConnectionMessage { username, left } ->
+            ( { model | messages = ("*" ++ username ++ "* " ++ ifThenElse left "left" "joined" ++ " the chat") :: model.messages }, Cmd.none )
+
+        -- TODO: handle error properly
+        WebSocketUnknownMessage err ->
+            -- temporarily shows the message for backward comp
+            --( addErrorIfNew model <| "the websocket sent a response I couldn't understand: " ++ err, Cmd.none )
+            ( { model | messages = err :: model.messages }, Cmd.none )
+
+
+type WebSocketMessage
+    = WebSocketChatMessage { username : String, message : String }
+    | WebSocketConnectionMessage { username : String, left : Bool }
+    | WebSocketUnknownMessage String
+
+
+decodeWebSocketMessage : String -> WebSocketMessage
+decodeWebSocketMessage value =
+    let
+        msgDecoder =
+            Json.Decode.map WebSocketChatMessage <|
+                Json.Decode.map2
+                    (\username message -> { username = username, message = message })
+                    (Json.Decode.field "username" Json.Decode.string)
+                    (Json.Decode.field "message" Json.Decode.string)
+
+        connDecoder =
+            Json.Decode.map WebSocketConnectionMessage <|
+                Json.Decode.map2 (\username left -> { username = username, left = left })
+                    (Json.Decode.field "username" Json.Decode.string)
+                    (Json.Decode.field "left" Json.Decode.bool)
+    in
+    case Json.Decode.decodeString (Json.Decode.oneOf [ msgDecoder, connDecoder ]) value of
+        Ok msg ->
+            msg
+
+        Err _ ->
+            WebSocketUnknownMessage value
 
 
 
