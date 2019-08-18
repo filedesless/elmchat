@@ -51,63 +51,12 @@ main =
 
 
 
--- SUBSCRIPTIONS
+-- Utilities
 
 
-subscriptions : Model -> Sub Msg
-subscriptions model =
-    WebSocket.listen wssChatUrl ReceivedChatMsg
-
-
-type alias Model =
-    { content : String
-    , messages : List String
-    , username : String
-    , password : String
-    , errors : List String
-    }
-
-
-init : ( Model, Cmd Msg )
-init =
-    ( { content = ""
-      , messages = []
-      , username = ""
-      , password = ""
-      , errors = []
-      }
-    , Cmd.none
-    )
-
-
-
--- UPDATE
-
-
-type Msg
-    = NewContent String
-    | NewUsername String
-    | SubmitNewMessage
-    | SubmitUsername
-    | PostedUsername (Result Http.Error String)
-    | ReceivedChatMsg String
-    | RemoveError Int
-    | CloseModal
-
-
-postUser : Model -> Http.Request String
-postUser model =
-    let
-        body =
-            Json.Encode.string model.username
-                |> Http.jsonBody
-    in
-    Http.post (apiBaseUrl ++ "/auth") body Json.Decode.string
-
-
-postUserCmd : Model -> Cmd Msg
-postUserCmd model =
-    Http.send PostedUsername (postUser model)
+addErrorIfNew : Model -> String -> Model
+addErrorIfNew model err =
+    { model | errors = ifThenElse (List.member err model.errors) model.errors <| err :: model.errors }
 
 
 handleHttpError : Http.Error -> String
@@ -134,6 +83,107 @@ handleHttpError error =
             err ++ ": " ++ toString response
 
 
+ifThenElse : Bool -> a -> a -> a
+ifThenElse predicate x y =
+    if predicate then
+        x
+
+    else
+        y
+
+
+
+-- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    WebSocket.listen wssChatUrl ReceivedChatMsg
+
+
+type alias Model =
+    { content : String
+    , messages : List String
+    , username : String
+    , password : String
+    , errors : List String
+    , users : List String
+    }
+
+
+
+-- TODO: get user list from websocket instead, to get dynamic updates
+--          requires the server to allow guest connections, at least for reading
+
+
+getUserList : Http.Request (List String)
+getUserList =
+    Http.get apiAuthUrl <| Json.Decode.list Json.Decode.string
+
+
+getUserListCmd : Cmd Msg
+getUserListCmd =
+    Http.send GotUserList getUserList
+
+
+gotUserList : Model -> Result Http.Error (List String) -> ( Model, Cmd Msg )
+gotUserList model result =
+    case result of
+        Ok users ->
+            ( { model | users = users }, Cmd.none )
+
+        Err error ->
+            let
+                err =
+                    handleHttpError error
+            in
+            ( addErrorIfNew model err, Cmd.none )
+
+
+init : ( Model, Cmd Msg )
+init =
+    ( { content = ""
+      , messages = []
+      , username = ""
+      , password = ""
+      , errors = []
+      , users = []
+      }
+    , getUserListCmd
+    )
+
+
+
+-- UPDATE
+
+
+type Msg
+    = NewContent String
+    | NewUsername String
+    | SubmitNewMessage
+    | SubmitUsername
+    | PostedUsername (Result Http.Error String)
+    | ReceivedChatMsg String
+    | RemoveError Int
+    | CloseModal
+    | GotUserList (Result Http.Error (List String))
+
+
+postUser : Model -> Http.Request String
+postUser model =
+    let
+        body =
+            Json.Encode.string model.username
+                |> Http.jsonBody
+    in
+    Http.post (apiBaseUrl ++ "/auth") body Json.Decode.string
+
+
+postUserCmd : Model -> Cmd Msg
+postUserCmd model =
+    Http.send PostedUsername (postUser model)
+
+
 postedUsername : Model -> Result Http.Error String -> ( Model, Cmd Msg )
 postedUsername model result =
     case result of
@@ -150,7 +200,7 @@ postedUsername model result =
                 err =
                     handleHttpError error
             in
-            ( { model | errors = ifThenElse (List.member err model.errors) model.errors <| err :: model.errors }
+            ( addErrorIfNew model err
             , Cmd.none
             )
 
@@ -207,18 +257,12 @@ update msg model =
         CloseModal ->
             ( model, Cmd.none )
 
+        GotUserList result ->
+            gotUserList model result
+
 
 
 -- VIEW
-
-
-ifThenElse : Bool -> a -> a -> a
-ifThenElse predicate x y =
-    if predicate then
-        x
-
-    else
-        y
 
 
 loggedIn : Model -> Bool
@@ -248,6 +292,13 @@ displayErrors model =
         List.indexedMap displayError model.errors
 
 
+displayUserList : Model -> Html Msg
+displayUserList model =
+    ListGroup.ul <|
+        [ ListGroup.li [ ListGroup.primary ] [ Html.h4 [] [ text "Connected users" ] ] ]
+            ++ List.map (\s -> ListGroup.li [] [ text s ]) model.users
+
+
 displayLoginForm : Model -> Html Msg
 displayLoginForm model =
     let
@@ -274,6 +325,10 @@ displayLoginForm model =
                         [ Button.button [ Button.primary ] [ text "Login" ] ]
                     ]
                 , Form.row [] [ Form.col [] [ displayErrors model ] ]
+                , Form.row []
+                    [ Form.col []
+                        [ ifThenElse (loggedIn model) (Html.span [] []) (displayUserList model) ]
+                    ]
                 ]
             ]
         |> Modal.view (ifThenElse (loggedIn model) Modal.hidden Modal.shown)
@@ -282,24 +337,28 @@ displayLoginForm model =
 displayBody : Model -> Html Msg
 displayBody model =
     div []
-        [ Form.form
-            [ Html.Events.onSubmit SubmitNewMessage ]
-            [ Form.row []
-                [ Form.col []
-                    [ Input.text
-                        [ Input.placeholder "Write a message"
-                        , Input.value model.content
-                        , Input.onInput NewContent
-                        , Input.attrs [ autofocus (loggedIn model) ]
+        [ ListGroup.ul
+            ([ ListGroup.li [ ListGroup.primary ]
+                [ Form.form [ Html.Events.onSubmit SubmitNewMessage ]
+                    [ Form.row []
+                        [ Form.col []
+                            [ Input.text
+                                [ Input.placeholder "Write a message"
+                                , Input.value model.content
+                                , Input.onInput NewContent
+                                , Input.attrs [ autofocus (loggedIn model) ]
+                                ]
+                            ]
+                        , Form.col [ Col.smAuto ]
+                            [ Button.button [ Button.primary ] [ text "Submit" ] ]
                         ]
                     ]
-                , Form.col [ Col.smAuto ]
-                    [ Button.button [ Button.primary ] [ text "Submit" ]
-                    ]
                 ]
-            ]
+             ]
+                ++ List.map (\message -> ListGroup.li [] [ text message ]) model.messages
+            )
         , Html.br [] []
-        , div [] <| List.map (\message -> p [] [ text message ]) model.messages
+        , ifThenElse (loggedIn model) (displayUserList model) (Html.span [] [])
         ]
 
 
@@ -309,6 +368,7 @@ view model =
         [ CDN.stylesheet
         , Html.br [] []
         , ifThenElse (loggedIn model) (displayErrors model) <| Html.span [] []
+        , Html.br [] []
         , displayLoginForm model
         , displayBody model
         ]
