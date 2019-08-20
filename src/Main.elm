@@ -22,7 +22,8 @@ import WebSocket
 
 apiBaseUrl : String
 apiBaseUrl =
-    "https://localhost:5001/api"
+    -- "https://localhost:5001/api"
+    "https://api.filedesless.dev/api"
 
 
 apiAuthUrl : String
@@ -32,7 +33,8 @@ apiAuthUrl =
 
 wssBaseUrl : String
 wssBaseUrl =
-    "wss://localhost:5001/ws"
+    -- "wss://localhost:5001/ws"
+    "wss://api.filedesless.dev/ws"
 
 
 wssChatUrl : String
