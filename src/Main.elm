@@ -276,11 +276,8 @@ handleWebSocketMessage model value =
         WebSocketConnectionMessage { username, left } ->
             ( { model | messages = ("*" ++ username ++ "* " ++ ifThenElse left "left" "joined" ++ " the chat") :: model.messages }, Cmd.none )
 
-        -- TODO: handle error properly
         WebSocketUnknownMessage err ->
-            -- temporarily shows the message for backward comp
-            --( addErrorIfNew model <| "the websocket sent a response I couldn't understand: " ++ err, Cmd.none )
-            ( { model | messages = err :: model.messages }, Cmd.none )
+            ( addErrorIfNew model <| "the websocket sent a response I couldn't understand: " ++ err, Cmd.none )
 
 
 type WebSocketMessage
